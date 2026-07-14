@@ -94,7 +94,13 @@ func isGitMarker(gitPath string) bool {
 	if line[:len(prefix)] != prefix {
 		return false
 	}
-	gitdir := filepath.Clean(filepath.Join(filepath.Dir(gitPath), filepath.Clean(filepath.FromSlash(string(trimSpace(line[len(prefix):]))))))
+	gitdir := filepath.Clean(filepath.FromSlash(trimSpace(line[len(prefix):])))
+	if !filepath.IsAbs(gitdir) {
+		// Relative gitdir values are resolved against the directory that
+		// holds the .git file; absolute values (what `git worktree add`
+		// writes) are used as-is.
+		gitdir = filepath.Clean(filepath.Join(filepath.Dir(gitPath), gitdir))
+	}
 	if gitdir == "" || gitdir == "." {
 		return false
 	}

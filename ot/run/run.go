@@ -51,7 +51,7 @@ func RunCapture(ctx context.Context, spec Spec) (string, error) {
 	return string(out), err
 }
 
-type LineCallback func(line string) bool
+type LineCallback func(line string)
 
 func RunTee(ctx context.Context, spec Spec, maxCapture int) (string, error) {
 	return RunTeeWithCallback(ctx, spec, maxCapture, nil)
@@ -158,8 +158,11 @@ func RunInteractiveWithSignals(ctx context.Context, spec Spec) error {
 			}
 		}
 	}()
+	// Never close a signal.Notify channel: a signal delivered between the
+	// close and signal.Stop would make os/signal's delivery goroutine panic
+	// with "send on closed channel". After Stop, the relay goroutine above
+	// blocks on the unreferenced channel and both are garbage collected.
 	defer signal.Stop(sigCh)
-	defer close(sigCh)
 
 	return cmd.Wait()
 }

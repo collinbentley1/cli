@@ -23,8 +23,9 @@ var baseAgentTools = []agentTool{
 	{Name: "infisical", Binaries: []string{"infisical"}, Hint: "install the Infisical CLI from Infisical's official apt repository in the cloud environment setup script"},
 }
 
-// IsCloudAgent returns true for the pared-down Linux/cloud path used by Codex
-// Cloud and Claude Code Cloud. Humans should not normally set these env vars.
+// IsCloudAgent returns true for the pared-down Linux/cloud path used by
+// OpenAI Codex cloud tasks and Anthropic Claude Code on the web. Humans
+// should not normally set these env vars.
 func IsCloudAgent() bool {
 	return truthyEnv("OT_CLOUD_AGENT") || CloudAgentHost() != ""
 }

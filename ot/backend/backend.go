@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -564,12 +566,17 @@ func maybeRestart(
 	return false, nil
 }
 
+// portInUse probes by binding rather than shelling out to lsof: an lsof
+// failure (including lsof simply not being installed, common on minimal
+// Linux hosts) must not read as "port free" — that double-starts uvicorn
+// onto a busy port.
 func portInUse(port string) bool {
-	_, err := run.RunCapture(context.Background(), run.Spec{
-		Program: "lsof",
-		Args:    []string{"-nP", "-iTCP:" + port, "-sTCP:LISTEN", "-t"},
-	})
-	return err == nil
+	listener, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", port))
+	if err != nil {
+		return true
+	}
+	_ = listener.Close()
+	return false
 }
 
 func stopService(
@@ -601,6 +608,9 @@ func findUvicornPids(port string, appModule string) []string {
 		Args:    []string{"-nP", "-iTCP:" + port, "-sTCP:LISTEN", "-t"},
 	})
 	if err != nil {
+		if _, lookErr := exec.LookPath("lsof"); lookErr != nil {
+			fmt.Fprintf(os.Stderr, "[backend] warning: lsof not found; cannot discover processes listening on port %s\n", port)
+		}
 		return nil
 	}
 	lines := strings.Fields(out)

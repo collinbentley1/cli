@@ -18,7 +18,7 @@ import (
 
 func ConnectDatastore(ctx context.Context, repoRoot string, cfg *config.Config, env string, which string) error {
 	if !providers.DBTunnelEnabled() {
-		return errors.New("db tunnel provider is disabled (providers.db_tunnel: none); enable porter in ot/ot.yaml or run your own tunnel")
+		return errors.New("db tunnel provider is disabled (db_tunnel resolves to none — check OT_DB_TUNNEL_PROVIDER and providers.db_tunnel in ot/ot.yaml); enable porter or run your own tunnel")
 	}
 	datastore, port, err := resolve(cfg, env, which)
 	if err != nil {
@@ -71,12 +71,11 @@ func runConnect(ctx context.Context, repoRoot string, datastore string, port int
 	}
 
 	connWritten := false
-	onLine := func(line string) bool {
+	onLine := func(line string) {
 		if !connWritten && strings.Contains(line, "PGPASSWORD=") && strings.Contains(line, "psql") {
 			writeConnectionInfo(repoRoot, which, line)
 			connWritten = true
 		}
-		return false
 	}
 
 	out, err := run.RunTeeWithCallback(ctx, spec, 64*1024, onLine)
@@ -84,12 +83,18 @@ func runConnect(ctx context.Context, repoRoot string, datastore string, port int
 }
 
 func writeConnectionInfo(repoRoot string, which string, line string) {
+	// The captured line contains live datastore credentials (PGPASSWORD=...),
+	// so keep the file and its directory owner-only, and tighten any
+	// pre-existing world-readable file from earlier versions.
 	connDir := filepath.Join(repoRoot, ".ot", "connections")
-	if err := os.MkdirAll(connDir, 0o755); err != nil {
+	if err := os.MkdirAll(connDir, 0o700); err != nil {
 		return
 	}
 	connFile := filepath.Join(connDir, which+".txt")
-	_ = os.WriteFile(connFile, []byte(strings.TrimSpace(line)+"\n"), 0o644)
+	if err := os.WriteFile(connFile, []byte(strings.TrimSpace(line)+"\n"), 0o600); err != nil {
+		return
+	}
+	_ = os.Chmod(connFile, 0o600)
 }
 
 func isAuthError(output string) bool {

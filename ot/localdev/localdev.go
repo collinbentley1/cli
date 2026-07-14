@@ -357,12 +357,36 @@ func allocateProfile(repoRoot string) (*Profile, error) {
 	}
 	defer func() { _ = unix.Flock(int(lock.Fd()), unix.LOCK_UN) }()
 
+	profilePath := filepath.Join(repoRoot, ".ot", "local-dev-profile.json")
+
+	// Re-check the on-disk profile now that we hold the lock: another
+	// process may have finished allocating while we waited, and returning
+	// its profile keeps both processes' in-memory secrets identical.
+	if strings.TrimSpace(os.Getenv(forceReallocateEnv)) == "" {
+		if profile, err := readProfile(profilePath); err == nil && profile.validFor(repoRoot) {
+			return profile, nil
+		}
+	}
+
+	// Reuse existing DB passwords when a prior profile exists (even under
+	// OT_WORKTREE_REASSIGN_PORTS, which promises a fresh port block, not
+	// fresh credentials): the postgres containers are keyed by instance id
+	// and keep their old passwords, so regenerating secrets here would break
+	// every DB URL against the still-running containers.
+	var reuseSecrets *Secrets
+	if prior, err := readProfile(profilePath); err == nil && prior != nil &&
+		prior.RepoRoot == repoRoot &&
+		prior.Secrets.AppDBPassword != "" && prior.Secrets.CRMDBPassword != "" {
+		secrets := prior.Secrets
+		reuseSecrets = &secrets
+	}
+
 	registryPath := filepath.Join(regDir, "profiles.json")
 	registry := readRegistry(registryPath)
 	pruneRegistry(registry)
 
 	if entry, ok := registry.Repos[repoRoot]; ok && strings.TrimSpace(os.Getenv(forceReallocateEnv)) == "" {
-		profile, err := newProfile(repoRoot, entry.InstanceID, entry.Offset)
+		profile, err := newProfile(repoRoot, entry.InstanceID, entry.Offset, reuseSecrets)
 		if err != nil {
 			return nil, err
 		}
@@ -396,7 +420,7 @@ func allocateProfile(repoRoot string) (*Profile, error) {
 		if !portsAvailable(ports) {
 			continue
 		}
-		profile, err := newProfile(repoRoot, instanceID, offset)
+		profile, err := newProfile(repoRoot, instanceID, offset, reuseSecrets)
 		if err != nil {
 			return nil, err
 		}
@@ -413,12 +437,18 @@ func allocateProfile(repoRoot string) (*Profile, error) {
 	return nil, fmt.Errorf("could not allocate a free local port block for %s", repoRoot)
 }
 
-func newProfile(repoRoot, instanceID string, offset int) (*Profile, error) {
+func newProfile(repoRoot, instanceID string, offset int, reuseSecrets *Secrets) (*Profile, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	ports := portsForOffset(offset)
-	secrets, err := newSecrets()
-	if err != nil {
-		return nil, err
+	var secrets Secrets
+	if reuseSecrets != nil {
+		secrets = *reuseSecrets
+	} else {
+		generated, err := newSecrets()
+		if err != nil {
+			return nil, err
+		}
+		secrets = generated
 	}
 	return &Profile{
 		Version:    profileVersion,
@@ -508,13 +538,35 @@ func writeProfile(path string, profile *Profile) error {
 		return fmt.Errorf("encode local profile: %w", err)
 	}
 	data = append(data, '\n')
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	if err := atomicWriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
-	if err := os.Chmod(path, 0o600); err != nil {
-		return fmt.Errorf("chmod %s: %w", path, err)
-	}
 	return nil
+}
+
+// atomicWriteFile writes via a temp file + rename in the destination
+// directory so a crash mid-write can never leave torn JSON behind (a torn
+// profile or registry would silently trigger reallocation).
+func atomicWriteFile(path string, data []byte, mode os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }()
+	if err := tmp.Chmod(mode); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }
 
 func readRegistry(path string) registryFile {
@@ -545,7 +597,7 @@ func writeRegistry(path string, registry registryFile) error {
 		return fmt.Errorf("encode local profile registry: %w", err)
 	}
 	data = append(data, '\n')
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := atomicWriteFile(path, data, 0o644); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
 	return nil

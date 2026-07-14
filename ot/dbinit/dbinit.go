@@ -82,9 +82,15 @@ func EnsureContainer(ctx context.Context, repoRoot, name, image, hostPort string
 		}, "docker start"); err != nil {
 			return false, err
 		}
-		time.Sleep(2 * time.Second)
 	}
 	if exists {
+		// Probe readiness instead of sleeping: a restarted postgres in
+		// crash recovery can need well over a fixed delay, and callers
+		// run psql immediately on the existed path. Returns quickly when
+		// the container was already running and ready.
+		if err := WaitForPostgres(ctx, name, initCfg.User, initCfg.Database, hostPort); err != nil {
+			return true, err
+		}
 		return true, nil
 	}
 	if err := runQuietMaybeInteractive(ctx, quiet, run.Spec{
@@ -155,13 +161,13 @@ func EnsureRdsRolesAndDb(ctx context.Context, container string, initCfg, appCfg 
 
 	if !strings.EqualFold(initCfg.User, "postgres") {
 		rdsAdminSQL := fmt.Sprintf(
-			"DO $$BEGIN "+
+			"DO $ot_init$BEGIN "+
 				"IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = %s) THEN "+
 				"CREATE ROLE %s LOGIN PASSWORD %s SUPERUSER CREATEROLE CREATEDB REPLICATION BYPASSRLS INHERIT; "+
 				"ELSE "+
 				"ALTER ROLE %s LOGIN PASSWORD %s SUPERUSER CREATEROLE CREATEDB REPLICATION BYPASSRLS INHERIT; "+
 				"END IF; "+
-				"END$$;",
+				"END$ot_init$;",
 			quoteLiteral(initCfg.User),
 			rdsAdminRole,
 			rdsPassword,
@@ -193,13 +199,13 @@ func EnsureRdsRolesAndDb(ctx context.Context, container string, initCfg, appCfg 
 	}
 
 	postgresSQL := fmt.Sprintf(
-		"DO $$BEGIN "+
+		"DO $ot_init$BEGIN "+
 			"IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = %s) THEN "+
 			"CREATE ROLE %s LOGIN PASSWORD %s NOSUPERUSER CREATEROLE CREATEDB NOREPLICATION NOBYPASSRLS INHERIT; "+
 			"ELSE "+
 			"ALTER ROLE %s LOGIN PASSWORD %s NOSUPERUSER CREATEROLE CREATEDB NOREPLICATION NOBYPASSRLS INHERIT; "+
 			"END IF; "+
-			"END$$;",
+			"END$ot_init$;",
 		quoteLiteral(appCfg.User),
 		postgresRole,
 		postgresPassword,

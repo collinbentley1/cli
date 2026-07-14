@@ -59,6 +59,9 @@ func Load(repoRoot string) (*Config, error) {
 	if err := yaml.Unmarshal(b, &cfg); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
+	if cfg.Version == 0 {
+		return nil, fmt.Errorf("ot/ot.yaml is missing the required `version: 1` field")
+	}
 	if cfg.Version != 1 {
 		return nil, fmt.Errorf("unsupported ot/ot.yaml version: %d (expected 1)", cfg.Version)
 	}

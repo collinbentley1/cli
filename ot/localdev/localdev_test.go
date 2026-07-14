@@ -81,6 +81,125 @@ func TestApplyAllocatesWorktreePortsAndOverridesDBURLs(t *testing.T) {
 	}
 }
 
+func writeLinkedWorktreeFixture(t *testing.T) string {
+	t.Helper()
+	repoRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(repoRoot, ".git"), []byte("gitdir: /tmp/example\n"), 0o644); err != nil {
+		t.Fatalf("write git file: %v", err)
+	}
+	return repoRoot
+}
+
+// Two worktrees sharing one registry must get disjoint port blocks — this is
+// the core isolation promise. Uses Ensure() rather than Apply() so process
+// env is not mutated.
+func TestEnsureAllocatesDisjointPortBlocksAcrossWorktrees(t *testing.T) {
+	t.Setenv(registryDirEnv, t.TempDir())
+	t.Setenv(forceReallocateEnv, "")
+
+	repoA := writeLinkedWorktreeFixture(t)
+	repoB := writeLinkedWorktreeFixture(t)
+
+	profileA, err := Ensure(repoA)
+	if err != nil {
+		t.Fatalf("Ensure(repoA) returned error: %v", err)
+	}
+	profileB, err := Ensure(repoB)
+	if err != nil {
+		t.Fatalf("Ensure(repoB) returned error: %v", err)
+	}
+	if profileA == nil || profileB == nil {
+		t.Fatal("expected profiles for both worktrees")
+	}
+
+	if profileA.Offset == profileB.Offset {
+		t.Fatalf("both worktrees got offset %d; registry marking failed", profileA.Offset)
+	}
+	if profileA.InstanceID == profileB.InstanceID {
+		t.Fatalf("both worktrees got instance id %q", profileA.InstanceID)
+	}
+	portsA := map[int]bool{}
+	for _, port := range profileA.Ports.list() {
+		portsA[port] = true
+	}
+	for _, port := range profileB.Ports.list() {
+		if portsA[port] {
+			t.Fatalf("port %d allocated to both worktrees\nA: %+v\nB: %+v", port, profileA.Ports, profileB.Ports)
+		}
+	}
+}
+
+// Re-allocation after a lost profile must be stable: the shared registry
+// remembers the worktree's instance id and offset, so deleting
+// .ot/local-dev-profile.json and re-running yields the same block (containers
+// and ports keep working).
+func TestEnsureReallocatesSameOffsetAfterProfileDeleted(t *testing.T) {
+	t.Setenv(registryDirEnv, t.TempDir())
+	t.Setenv(forceReallocateEnv, "")
+
+	repoRoot := writeLinkedWorktreeFixture(t)
+	first, err := Ensure(repoRoot)
+	if err != nil {
+		t.Fatalf("Ensure() returned error: %v", err)
+	}
+	if first == nil {
+		t.Fatal("expected profile")
+	}
+
+	if err := os.Remove(filepath.Join(repoRoot, ".ot", "local-dev-profile.json")); err != nil {
+		t.Fatalf("remove profile: %v", err)
+	}
+
+	second, err := Ensure(repoRoot)
+	if err != nil {
+		t.Fatalf("Ensure() after profile delete returned error: %v", err)
+	}
+	if second == nil {
+		t.Fatal("expected profile after delete")
+	}
+	if second.Offset != first.Offset {
+		t.Fatalf("Offset changed after profile delete: %d -> %d", first.Offset, second.Offset)
+	}
+	if second.InstanceID != first.InstanceID {
+		t.Fatalf("InstanceID changed after profile delete: %q -> %q", first.InstanceID, second.InstanceID)
+	}
+}
+
+// OT_WORKTREE_REASSIGN_PORTS promises a fresh port block, not fresh
+// credentials: the per-worktree postgres containers keep their existing
+// passwords, so reallocation must reuse the prior profile's secrets.
+func TestEnsureReassignPortsKeepsExistingDBSecrets(t *testing.T) {
+	t.Setenv(registryDirEnv, t.TempDir())
+	t.Setenv(forceReallocateEnv, "")
+
+	repoRoot := writeLinkedWorktreeFixture(t)
+	first, err := Ensure(repoRoot)
+	if err != nil {
+		t.Fatalf("Ensure() returned error: %v", err)
+	}
+	if first == nil {
+		t.Fatal("expected profile")
+	}
+
+	t.Setenv(forceReallocateEnv, "1")
+	second, err := Ensure(repoRoot)
+	if err != nil {
+		t.Fatalf("Ensure() with reassign returned error: %v", err)
+	}
+	if second == nil {
+		t.Fatal("expected profile under reassign")
+	}
+	if second.Secrets.AppDBPassword != first.Secrets.AppDBPassword {
+		t.Fatalf("app DB password regenerated under %s; existing container would refuse the new credentials", forceReallocateEnv)
+	}
+	if second.Secrets.CRMDBPassword != first.Secrets.CRMDBPassword {
+		t.Fatalf("crm DB password regenerated under %s", forceReallocateEnv)
+	}
+	if second.Containers != first.Containers {
+		t.Fatalf("container names changed: %+v -> %+v", first.Containers, second.Containers)
+	}
+}
+
 func TestShellExportLinesFromEnvIncludesLocalOverrides(t *testing.T) {
 	t.Setenv(activeEnv, "1")
 	t.Setenv("APP_PORT", "24005")

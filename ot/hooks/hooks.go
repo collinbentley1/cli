@@ -3,6 +3,7 @@ package hooks
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -33,6 +34,19 @@ func Install(repoRoot string) (string, error) {
 }
 
 func resolveHookDir(repoRoot string) (string, error) {
+	// Ask git first: in linked worktrees git resolves hooks from the COMMON
+	// dir (<main>/.git/hooks), not the per-worktree gitdir the .git file
+	// points at, and --git-path also honors core.hooksPath. The manual
+	// resolution below stays as the fallback for hosts without git.
+	if out, err := exec.Command("git", "-C", repoRoot, "rev-parse", "--git-path", "hooks").Output(); err == nil {
+		if dir := strings.TrimSpace(string(out)); dir != "" {
+			if !filepath.IsAbs(dir) {
+				dir = filepath.Join(repoRoot, dir)
+			}
+			return dir, nil
+		}
+	}
+
 	gitMarker := filepath.Join(repoRoot, ".git")
 	if st, err := os.Stat(gitMarker); err != nil {
 		return "", fmt.Errorf(".git not found: %w", err)

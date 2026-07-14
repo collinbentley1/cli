@@ -2,6 +2,7 @@ package hooks
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -45,6 +46,64 @@ func TestInstallWritesPreCommitAndPostMergeHooks(t *testing.T) {
 	} {
 		if !strings.Contains(content, want) {
 			t.Fatalf("post-merge hook missing %q:\n%s", want, content)
+		}
+	}
+}
+
+// In a real linked worktree git resolves hooks from the COMMON dir
+// (<main>/.git/hooks), not from the per-worktree gitdir the .git file points
+// at — hooks written to $GIT_DIR/worktrees/<name>/hooks are silently inert.
+// Install must place them where `git rev-parse --git-path hooks` says.
+func TestInstallInRealLinkedWorktreeMatchesGitPathHooks(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	git := func(dir string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(),
+			"GIT_CONFIG_GLOBAL=/dev/null",
+			"GIT_CONFIG_SYSTEM=/dev/null",
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.com",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.com",
+		)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+
+	mainRepo := t.TempDir()
+	git(mainRepo, "init", "-b", "main", ".")
+	git(mainRepo, "commit", "--allow-empty", "-m", "init")
+	worktree := filepath.Join(t.TempDir(), "linked")
+	git(mainRepo, "worktree", "add", worktree)
+
+	preCommitPath, err := Install(worktree)
+	if err != nil {
+		t.Fatalf("Install() returned error: %v", err)
+	}
+
+	wantHookDir := git(worktree, "rev-parse", "--git-path", "hooks")
+	if !filepath.IsAbs(wantHookDir) {
+		wantHookDir = filepath.Join(worktree, wantHookDir)
+	}
+	wantPreCommit, err := filepath.EvalSymlinks(filepath.Join(wantHookDir, "pre-commit"))
+	if err != nil {
+		t.Fatalf("pre-commit hook not found where git looks for it (%s): %v", wantHookDir, err)
+	}
+	gotPreCommit, err := filepath.EvalSymlinks(preCommitPath)
+	if err != nil {
+		t.Fatalf("resolve installed hook path: %v", err)
+	}
+	if gotPreCommit != wantPreCommit {
+		t.Fatalf("Install() wrote %s, but git resolves hooks at %s", gotPreCommit, wantPreCommit)
+	}
+	for _, name := range []string{"pre-commit", "post-merge"} {
+		if _, err := os.Stat(filepath.Join(wantHookDir, name)); err != nil {
+			t.Fatalf("%s hook missing from git's hook dir: %v", name, err)
 		}
 	}
 }

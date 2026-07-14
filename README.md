@@ -1,10 +1,7 @@
-<!-- TODO(collin): pick the public name. "ot" is the working name from the
-     original monorepo; the module path github.com/PLACEHOLDER/ot is a
-     placeholder until you decide. -->
 # ot
 
 Every agent worktree gets its own database, ports, secrets scope, and a live
-MCP tunnel. <!-- claim source: FACTS.md F5 (BULLETPROOF on capabilities) -->
+MCP tunnel.
 
 `ot` is a dev-runtime CLI for repos where multiple coding agents (and humans)
 work in parallel git worktrees. Check out N branches into N worktrees, run
@@ -14,7 +11,7 @@ work in parallel git worktrees. Check out N branches into N worktrees, run
   (`app-postgres-<instance-id>`), with a generated password, created and
   migrated on first `ot up`.
 - **Its own port block.** A deterministic, collision-checked block of local
-  ports (backend, worker, auth, frontends, CRM, docs, fixture site) so stacks
+  ports (backend, auth, frontends, CRM, docs, fixture site) so stacks
   never fight over 8005.
 - **Its own secrets scope.** Commands re-exec under the secrets provider
   (Infisical ships as the default) so the mapped secret folder is injected
@@ -33,14 +30,11 @@ over shared secrets. Set `OT_WORKTREE_ISOLATION=0` to opt out, or
 
 Extracted from a system that ran inside OTseek's monorepo,
 where it hosted the agent-team workflow that shipped a multi-tenant MCP-apps
-platform. <!-- claim source: FACTS.md F5, S3; phrasing per WS-E goal — do not
-overclaim beyond "ran in production at OTseek". --> This standalone cut is a
+platform. This standalone cut is a
 pre-release extraction candidate: the code is lifted intact, org-specific
 names are genericized, and the three external integrations are behind
 pluggable provider config. Service commands still encode the source repo's
 conventions (see "Repo conventions" below). Not yet released or versioned.
-
-<!-- TODO(collin): link the launch essay here when it exists. -->
 
 ## Quickstart
 
@@ -50,7 +44,7 @@ and the CLI rebuilds itself from source when its inputs change.
 
 ```bash
 # 1. Copy ot/ and go.mod into your repo root, then:
-./ot/scripts/install.sh   # macOS/arm64: installs Go if needed, builds ot,
+./ot/scripts/install.sh   # macOS/arm64: installs Homebrew + Go if needed, builds ot,
                           # symlinks it into $(brew --prefix)/bin, runs bootstrap
 
 # 2. Configure providers and secret scopes in ot/ot.yaml (see below).
@@ -66,9 +60,12 @@ ot down              # stop everything
 To build just the binary in this repo: `go build -o ot-bin ./ot`.
 
 Host requirements: macOS (Apple Silicon) for the full bootstrap path, or a
-Linux cloud-agent environment (Codex Cloud / Claude Code Cloud are detected
-via env and use a pared-down toolchain install). `ot bootstrap` installs the
-rest: tmux, overmind, uv, node via nvm, Docker, and the provider CLIs.
+Linux cloud-agent environment with a pared-down toolchain install. OpenAI
+Codex cloud tasks and Anthropic Claude Code on the web are detected via
+their environment (`CODEX_ENV_*`, `CLAUDE_CODE_OAUTH_TOKEN`); set
+`OT_CLOUD_AGENT=1` or `OT_CLOUD_AGENT_HOST=codex|claude` to force or correct
+detection. `ot bootstrap` installs the rest: tmux, overmind, uv, node via
+nvm, Docker, and the provider CLIs.
 
 ## Providers
 
@@ -77,6 +74,7 @@ live in `ot/providers`; the three shipped implementations are the defaults.
 
 ```yaml
 # ot/ot.yaml
+version: 1
 providers:
   secrets: infisical    # or "none"
   db_tunnel: porter     # or "none"
@@ -144,10 +142,14 @@ restored on shutdown.
 
 ## Commands
 
-- `ot up [all|backend|backend-worker|auth|crm|frontend|wordpress|db]`
-- `ot down [service]` / `ot logs [service]`
-- `ot check [all|backend|auth|crm|frontend|ot|skills|wordpress|datadog|mcp]`
+- `ot up [backend|backend-worker|auth|crm|frontend|wordpress|db]` — no
+  argument starts the full dev stack
+- `ot down [service]` / `ot logs
+  [backend|backend-worker|crm|crm-web|crm-worker|frontend|wordpress|db]`
+- `ot check [backend|auth|crm|frontend|ot|skills|wordpress|datadog|mcp]` — no
+  argument runs every hook set
 - `ot check mcp` — local MCP test harness against the running backend
+- `ot datadog-hook` — run the Datadog static-analyzer hook directly
 - `ot bootstrap` — full dependency install (tools, hooks, project deps)
 - `ot upgrade [all|frontend|backend|ot]` — cooldown-gated dependency upgrades
   (24h release cooldown, GuardDog verification for Go modules, sfw-wrapped
@@ -171,7 +173,9 @@ from. To use them as-is, your repo needs:
 - `ot/scripts/wordpress_dev.sh` — optional project-provided CMS fixture hook.
   Contract: `start [--reset] | stop | logs`; on start it writes
   `.ot/wordpress/backend-env.sh` with `export`s the backend should see. The
-  original tenant-specific fixture script is not shipped.
+  original tenant-specific fixture script is not shipped. `ot up backend`
+  runs this hook first when the script exists (and skips it with a notice
+  when it doesn't); set `OT_BACKEND_SKIP_WORDPRESS=1` to skip it explicitly.
 
 Adapting the command set to a different layout means editing `ot/backend`,
 `ot/crm`, and the procfile templates in `ot/cli/cmd_up.go` — they are plain

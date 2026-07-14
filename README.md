@@ -1,5 +1,7 @@
 # ot
 
+**Opinionated tooling for agentic engineering.**
+
 Every agent worktree gets its own database, ports, secrets scope, and a live
 MCP tunnel.
 

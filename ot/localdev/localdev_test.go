@@ -129,6 +129,60 @@ func TestEnsureAllocatesDisjointPortBlocksAcrossWorktrees(t *testing.T) {
 	}
 }
 
+// TestEnsureSkipsRegistryOccupiedPreferredOffset drives the registry
+// collision path directly, which two independent fixtures do not: their
+// hash-derived preferred offsets already differ, so disjointness there is
+// trivial and survives deleting the usedOffsets check. Here we pre-seed the
+// shared registry so a DIFFERENT (existing) repo already occupies the exact
+// offset repoB prefers, so the only thing that can push repoB off it is the
+// usedOffsets registry marking. If that marking is removed, repoB lands on
+// the occupied offset and this test fails.
+func TestEnsureSkipsRegistryOccupiedPreferredOffset(t *testing.T) {
+	t.Setenv(registryDirEnv, t.TempDir())
+	t.Setenv(forceReallocateEnv, "")
+
+	repoB := writeLinkedWorktreeFixture(t)
+	occupied := preferredOffset(repoB)
+
+	// The occupant must be an existing path or pruneRegistry drops it.
+	occupant := t.TempDir()
+	regDir, err := registryDir()
+	if err != nil {
+		t.Fatalf("registryDir: %v", err)
+	}
+	seed := registryFile{
+		Version: registryVersion,
+		Repos: map[string]registryEntry{
+			occupant: {InstanceID: "occupant00", Offset: occupied, UpdatedAt: "2026-01-01T00:00:00Z"},
+		},
+	}
+	if err := writeRegistry(filepath.Join(regDir, "profiles.json"), seed); err != nil {
+		t.Fatalf("seed registry: %v", err)
+	}
+
+	profileB, err := Ensure(repoB)
+	if err != nil {
+		t.Fatalf("Ensure(repoB) returned error: %v", err)
+	}
+	if profileB == nil {
+		t.Fatal("expected profile for repoB")
+	}
+
+	if profileB.Offset == occupied {
+		t.Fatalf("repoB took offset %d already held by another repo; registry marking not honored", occupied)
+	}
+
+	occupiedPorts := map[int]bool{}
+	for _, port := range portsForOffset(occupied).list() {
+		occupiedPorts[port] = true
+	}
+	for _, port := range profileB.Ports.list() {
+		if occupiedPorts[port] {
+			t.Fatalf("repoB port %d collides with the occupied block at offset %d", port, occupied)
+		}
+	}
+}
+
 // Re-allocation after a lost profile must be stable: the shared registry
 // remembers the worktree's instance id and offset, so deleting
 // .ot/local-dev-profile.json and re-running yields the same block (containers

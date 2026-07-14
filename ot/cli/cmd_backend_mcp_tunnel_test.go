@@ -22,6 +22,14 @@ if [ "$1" = "status" ] && [ "$2" = "--json" ]; then
   echo '{"CertDomains":["demo-machine.example.ts.net."]}'
   exit 0
 fi
+if [ "$1" = "debug" ] && [ "$2" = "prefs" ]; then
+  echo '{"CorpDNS":true}'
+  exit 0
+fi
+if [ "$1" = "set" ]; then
+  echo "set $2" >> %q
+  exit 0
+fi
 if [ "$1" = "funnel" ] && [ "$2" = "--https=443" ] && [ "$3" = "off" ]; then
   echo "off" >> %q
   exit 0
@@ -32,7 +40,7 @@ if [ "$1" = "funnel" ] && [ "$2" = "--bg" ] && [ "$3" = "--yes" ]; then
 fi
 echo "unexpected tailscale args: $*" >&2
 exit 1
-`, tailscaleLog, tailscaleLog)
+`, tailscaleLog, tailscaleLog, tailscaleLog)
 	if err := os.WriteFile(tailscaleBin, []byte(script), 0o755); err != nil {
 		t.Fatalf("write fake tailscale: %v", err)
 	}
@@ -112,6 +120,28 @@ exit 1
 	}
 	if strings.Count(logText, "off") < 2 {
 		t.Fatalf("fake tailscale log should include stop before and after running:\n%s", logText)
+	}
+
+	// MagicDNS lifecycle: suspended before the funnel starts (so the browser
+	// resolves the funnel through public DNS), restored after cancellation
+	// (prefs stub reports CorpDNS=true as the prior state).
+	suspendIdx := strings.Index(logText, "set --accept-dns=false")
+	startIdx := strings.Index(logText, "start http://127.0.0.1:")
+	restoreIdx := strings.LastIndex(logText, "set --accept-dns=true")
+	if suspendIdx == -1 {
+		t.Fatalf("fake tailscale log missing MagicDNS suspend:\n%s", logText)
+	}
+	if restoreIdx == -1 {
+		t.Fatalf("fake tailscale log missing MagicDNS restore:\n%s", logText)
+	}
+	if suspendIdx >= startIdx {
+		t.Fatalf("MagicDNS must be suspended before the funnel starts:\n%s", logText)
+	}
+	if startIdx >= restoreIdx {
+		t.Fatalf("MagicDNS must be restored after cancellation:\n%s", logText)
+	}
+	if _, err := os.Stat(backendMCPTunnelMagicDNSPath(repoRoot)); !os.IsNotExist(err) {
+		t.Fatalf("MagicDNS state file should be cleared after restore, stat err = %v", err)
 	}
 }
 

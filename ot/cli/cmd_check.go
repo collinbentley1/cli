@@ -60,7 +60,23 @@ func checkCmd() *cobra.Command {
   mcp     start the local MCP test harness (root app + tenant apps)
 
 Without a target, runs all pre-commit hooks.`,
-		Args: cobra.MaximumNArgs(2),
+		// Validate the target here: cobra runs Args before
+		// PersistentPreRunE, so a typo fails immediately instead of after
+		// the full bootstrap (brew installs, hook installs, project deps).
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) > 2 {
+				return fmt.Errorf("accepts at most 2 args, received %d", len(args))
+			}
+			if len(args) == 0 {
+				return nil
+			}
+			switch strings.TrimSpace(args[0]) {
+			case "datadog", "auth", "backend", "crm", "ot", "frontend", "wordpress", "skills", "mcp":
+				return nil
+			default:
+				return fmt.Errorf("unknown check target: %s", args[0])
+			}
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rt, err := runtimeOrFail(cmd.Context())
 			if err != nil {
@@ -146,15 +162,15 @@ Without a target, runs all pre-commit hooks.`,
 			}
 		},
 	}
-	cmd.Flags().StringVar(&mcpOptions.Target, "target", "", "MCP harness target slug for `ot check mcp`")
-	cmd.Flags().StringVar(&mcpOptions.TargetVersion, "target-version", "", "MCP harness target version for `ot check mcp`")
-	cmd.Flags().StringVar(&mcpOptions.BackendURL, "backend-url", "", "MCP harness backend base URL for `ot check mcp`")
-	cmd.Flags().StringVar(&mcpOptions.MCPURL, "mcp-url", "", "MCP harness full MCP endpoint override for `ot check mcp`")
-	cmd.Flags().StringVar(&mcpOptions.OpenAIModel, "openai-model", "", "MCP harness OpenAI model for `ot check mcp`")
-	cmd.Flags().StringVar(&mcpOptions.OpenAIBaseURL, "openai-base-url", "", "MCP harness OpenAI base URL for `ot check mcp`")
-	cmd.Flags().StringVar(&mcpOptions.Host, "host", "", "MCP harness UI bind host for `ot check mcp`")
-	cmd.Flags().IntVar(&mcpOptions.Port, "port", 0, "MCP harness UI bind port for `ot check mcp`")
-	cmd.Flags().StringVar(&mcpOptions.SystemPromptFile, "system-prompt-file", "", "MCP harness system prompt file for `ot check mcp`")
+	cmd.Flags().StringVar(&mcpOptions.Target, "target", "", "MCP harness target slug for 'ot check mcp'")
+	cmd.Flags().StringVar(&mcpOptions.TargetVersion, "target-version", "", "MCP harness target version for 'ot check mcp'")
+	cmd.Flags().StringVar(&mcpOptions.BackendURL, "backend-url", "", "MCP harness backend base URL for 'ot check mcp'")
+	cmd.Flags().StringVar(&mcpOptions.MCPURL, "mcp-url", "", "MCP harness full MCP endpoint override for 'ot check mcp'")
+	cmd.Flags().StringVar(&mcpOptions.OpenAIModel, "openai-model", "", "MCP harness OpenAI model for 'ot check mcp'")
+	cmd.Flags().StringVar(&mcpOptions.OpenAIBaseURL, "openai-base-url", "", "MCP harness OpenAI base URL for 'ot check mcp'")
+	cmd.Flags().StringVar(&mcpOptions.Host, "host", "", "MCP harness UI bind host for 'ot check mcp'")
+	cmd.Flags().IntVar(&mcpOptions.Port, "port", 0, "MCP harness UI bind port for 'ot check mcp'")
+	cmd.Flags().StringVar(&mcpOptions.SystemPromptFile, "system-prompt-file", "", "MCP harness system prompt file for 'ot check mcp'")
 	cmd.Flags().BoolVar(&mcpOptions.NoBrowser, "no-browser", false, "Do not auto-open the MCP harness browser UI")
 	cmd.Flags().BoolVar(&mcpOptions.ListTargets, "list-targets", false, "List MCP harness targets and exit")
 	cmd.Flags().BoolVarP(&mcpOptions.Verbose, "verbose", "v", false, "Enable MCP harness debug logging")

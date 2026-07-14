@@ -96,6 +96,7 @@ func runBackendMCPTunnel(ctx context.Context, repoRoot string, appPort string) e
 		return err
 	}
 	if err := writeBackendMCPTunnelState(repoRoot, publicURL); err != nil {
+		_ = stopTailscaleFunnel(context.Background(), tailscale, mountPath)
 		_ = restoreTailscaleMagicDNS(context.Background(), tailscale, repoRoot, priorAcceptDNS)
 		return err
 	}

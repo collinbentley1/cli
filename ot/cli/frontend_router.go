@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httputil"
@@ -74,12 +75,13 @@ func runFrontendRouter(ctx context.Context) error {
 	addr := ":" + port
 
 	router := newFrontendRouter()
+	// No Read/WriteTimeout: the write deadline survives ReverseProxy's
+	// connection hijack, so it would kill proxied WebSocket upgrades (Next.js
+	// HMR on this router port) ~15s after connect. IdleTimeout is safe.
 	server := &http.Server{
-		Addr:         addr,
-		Handler:      router.handler(),
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 15 * time.Second,
-		IdleTimeout:  30 * time.Second,
+		Addr:        addr,
+		Handler:     router.handler(),
+		IdleTimeout: 30 * time.Second,
 	}
 
 	go func() {
@@ -88,5 +90,8 @@ func runFrontendRouter(ctx context.Context) error {
 	}()
 
 	fmt.Printf("Frontend router listening on http://localhost:%s (/, /auth, /app, /docs)\n", port)
-	return server.ListenAndServe()
+	if err := server.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
 }

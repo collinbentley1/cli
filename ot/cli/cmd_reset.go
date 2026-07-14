@@ -20,10 +20,17 @@ func resetCmd() *cobra.Command {
 				return err
 			}
 
-			for _, name := range []string{"dev", "frontend", "db", "crm"} {
+			// Stop the tunnel (and restore MagicDNS from the state file)
+			// before .ot — which holds that state file — is wiped below.
+			_ = clearBackendMCPTunnelState(rt.RepoRoot)
+			stopBackendMCPTunnel(cmd.Context())
+
+			for _, name := range []string{"dev", "frontend", "backend", "db", "crm"} {
 				st, err := overmind.Stack(rt.Config, name)
 				if err != nil {
-					return err
+					// Configs may define a subset of the stacks; reset
+					// should still clean up everything else.
+					continue
 				}
 				_ = overmind.Quit(cmd.Context(), rt.RepoRoot, st)
 			}

@@ -63,11 +63,11 @@ Examples:
 			switch args[0] {
 			case "auth", "backend", "backend-worker", "crm", "frontend", "wordpress", "db", "frontend-router":
 				if args[0] != "frontend-router" && len(args) > 1 {
-					return fmt.Errorf("unknown service: %s (valid: auth, backend, backend-worker, crm, frontend, wordpress, frontend-router, db)", strings.Join(args, " "))
+					return fmt.Errorf("unknown service: %s (valid: auth, backend, backend-worker, crm, frontend, wordpress, db)", strings.Join(args, " "))
 				}
 				return nil
 			default:
-				return fmt.Errorf("unknown service: %s (valid: auth, backend, backend-worker, crm, frontend, wordpress, frontend-router, db)", args[0])
+				return fmt.Errorf("unknown service: %s (valid: auth, backend, backend-worker, crm, frontend, wordpress, db)", args[0])
 			}
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -98,7 +98,7 @@ Examples:
 			case "frontend-router":
 				return runFrontendRouter(cmd.Context())
 			default:
-				return fmt.Errorf("unknown service: %s (valid: auth, backend, backend-worker, crm, frontend, wordpress, frontend-router, db)", args[0])
+				return fmt.Errorf("unknown service: %s (valid: auth, backend, backend-worker, crm, frontend, wordpress, db)", args[0])
 			}
 		},
 	}
@@ -197,6 +197,14 @@ func shouldBootstrapWordpressForBackend() bool {
 // from `.ot/wordpress/backend-env.sh`. Skipped when both the env file and the
 // WP port are already healthy, or when OT_BACKEND_SKIP_WORDPRESS is set.
 func ensureWordpressForBackend(cmd *cobra.Command, rt *Runtime) error {
+	// The WordPress fixture hook is a project-provided, optional script (see
+	// README "Repo conventions"); repos without it should not fail
+	// `ot up backend` on a missing file.
+	scriptPath := filepath.Join(rt.RepoRoot, "ot", "scripts", "wordpress_dev.sh")
+	if info, err := os.Stat(scriptPath); err != nil || info.IsDir() {
+		fmt.Println("WordPress fixture hook (ot/scripts/wordpress_dev.sh) not present; skipping WordPress bootstrap.")
+		return nil
+	}
 	envPath := filepath.Join(rt.RepoRoot, ".ot", "wordpress", "backend-env.sh")
 	envExists := false
 	if info, err := os.Stat(envPath); err == nil && !info.IsDir() {
@@ -473,7 +481,7 @@ func cleanFrontendCaches(repoRoot string) error {
 
 func upDB(cmd *cobra.Command, rt *Runtime, envFlag string) error {
 	if !providers.DBTunnelEnabled() {
-		return fmt.Errorf("db tunnel provider is disabled (providers.db_tunnel: none in ot/ot.yaml); enable porter or run your own tunnel")
+		return fmt.Errorf("db tunnel provider is disabled (db_tunnel resolves to none — check OT_DB_TUNNEL_PROVIDER and providers.db_tunnel in ot/ot.yaml); enable porter or run your own tunnel")
 	}
 	if isDBStackRunning(rt) {
 		fmt.Println("Stopping existing DB tunnels...")

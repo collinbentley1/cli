@@ -59,16 +59,32 @@ Examples:
 				fmt.Println("auth stopped.")
 				return nil
 			case "backend":
+				// Record whether anything backend-shaped was actually
+				// running so the final message is honest.
+				wasRunning := false
+				if _, socket, err := stackWithProcfile(rt, "backend"); err == nil && overmind.SocketAlive(socket) {
+					wasRunning = true
+				}
+				if _, socket, err := stackWithProcfile(rt, "dev"); err == nil && overmind.SocketAlive(socket) {
+					wasRunning = true
+				}
 				_ = clearBackendMCPTunnelState(rt.RepoRoot)
 				stopBackendMCPTunnel(cmd.Context())
 				_ = downProcess(cmd, rt, "backend-worker")
 				_ = downBackendStack(cmd, rt)
 				_ = downProcess(cmd, rt, "backend")
-				if err := backend.Stop(cmd.Context(), rt.RepoRoot); err != nil &&
-					!strings.Contains(err.Error(), "not running") {
-					return err
+				if err := backend.Stop(cmd.Context(), rt.RepoRoot); err != nil {
+					if !strings.Contains(err.Error(), "not running") {
+						return err
+					}
+				} else {
+					wasRunning = true
 				}
-				fmt.Println("backend stopped.")
+				if wasRunning {
+					fmt.Println("backend stopped.")
+				} else {
+					fmt.Println("backend already stopped.")
+				}
 				return nil
 			case "backend-worker":
 				if err := downProcess(cmd, rt, "backend-worker"); err == nil {
@@ -128,7 +144,9 @@ func downDevStack(cmd *cobra.Command, rt *Runtime) error {
 		}
 	}
 	if err := docker.StopContainers(cmd.Context(), rt.RepoRoot, dockerContainersForRuntime(rt)); err != nil {
-		return err
+		// The overmind stacks above are already stopped; a dead Docker
+		// daemon should not make `ot down` fail with an opaque error.
+		fmt.Printf("warning: could not stop Docker containers (%v — is the Docker daemon running?); skipping container stop.\n", err)
 	}
 	fmt.Println("Dev stack stopped.")
 	return nil
@@ -175,6 +193,7 @@ func downDB(cmd *cobra.Command, rt *Runtime) error {
 	}
 	socket := filepath.Join(rt.RepoRoot, st.Socket)
 	if !overmind.SocketAlive(socket) {
+		fmt.Println("DB tunnels already stopped.")
 		return nil
 	}
 	if err := overmind.Quit(cmd.Context(), rt.RepoRoot, st); err != nil {
@@ -198,6 +217,7 @@ func downCRM(cmd *cobra.Command, rt *Runtime) error {
 	}
 	socket := filepath.Join(rt.RepoRoot, st.Socket)
 	if !overmind.SocketAlive(socket) {
+		fmt.Println("CRM already stopped.")
 		return nil
 	}
 	if err := overmind.Quit(cmd.Context(), rt.RepoRoot, st); err != nil {
@@ -274,7 +294,10 @@ func downFrontend(cmd *cobra.Command, rt *Runtime) error {
 		return err
 	}
 	if !overmind.SocketAlive(socket) {
-		return fmt.Errorf("frontend not running; run 'ot up frontend' first")
+		// Consistent with the other targets: stopping something already
+		// stopped is a success, not an error.
+		fmt.Println("frontend already stopped.")
+		return nil
 	}
 	if err := overmind.Quit(cmd.Context(), rt.RepoRoot, st); err != nil {
 		return err

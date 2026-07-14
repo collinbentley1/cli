@@ -89,22 +89,6 @@ Examples:
 				fmt.Println()
 			}
 
-			if len(args) > 0 {
-				return run.RunInteractiveWithSignals(cmd.Context(), run.Spec{
-					Program: "bash",
-					Args: []string{
-						"-c",
-						fmt.Sprintf(
-							"overmind echo -s %s | grep --line-buffered '^%s '",
-							socket,
-							args[0],
-						),
-					},
-					Dir: rt.RepoRoot,
-					Env: map[string]string{"OVERMIND_SKIP_ENV": "1"},
-				})
-			}
-
 			return run.RunInteractiveWithSignals(cmd.Context(), run.Spec{
 				Program: "overmind",
 				Args:    []string{"echo", "-s", socket},

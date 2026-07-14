@@ -28,7 +28,7 @@ func ensureSelfBinary(ctx context.Context, repoRoot string) error {
 	}
 
 	if err := buildOtBinary(ctx, repoRoot, binPath, sha); err != nil {
-		return fmt.Errorf("build self binary: %w", err)
+		return fmt.Errorf("build self binary (ot must be vendored at %s/ot — see the README Quickstart): %w", repoRoot, err)
 	}
 	return nil
 }

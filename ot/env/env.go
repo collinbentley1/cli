@@ -319,11 +319,16 @@ func WrapRunShellCommand(command string, opts RunOptions) string {
 	if !providers.SecretsEnabled() {
 		return command
 	}
+	if useRuntimeUniversalAuth() {
+		// Mirror WrapRunSpec: the run script quotes every embedded arg
+		// itself and consumes the wrapped command via its trailing
+		// `-- "$@"`, so the command must arrive as real positional args
+		// (quoted exactly once) rather than being embedded pre-quoted.
+		return "bash -lc " + shellQuote(universalAuthRunScript(shellRunArgs(opts))) +
+			" ot-infisical-run bash -lc " + shellQuote(command)
+	}
 	args := shellRunArgs(opts)
 	args = append(args, "--", "bash", "-lc", shellQuote(command))
-	if useRuntimeUniversalAuth() {
-		return "bash -lc " + shellQuote(universalAuthRunScript(args))
-	}
 	return strings.Join(append([]string{"infisical"}, args...), " ")
 }
 

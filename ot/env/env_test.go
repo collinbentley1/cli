@@ -3,7 +3,9 @@ package env
 import (
 	"context"
 	"errors"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -217,6 +219,70 @@ func TestWrapRunSpecUsesRuntimeUniversalAuthWithoutPersistedLogin(t *testing.T) 
 	wantTail := []string{"ot-infisical-run", "ot", "check", "ot"}
 	if !reflect.DeepEqual(got.Args[2:], wantTail) {
 		t.Fatalf("Args tail = %v, want %v", got.Args[2:], wantTail)
+	}
+}
+
+// Regression test: the universal-auth path of WrapRunShellCommand used to
+// embed the pre-quoted command inside the run script, whose shellQuoteArgs
+// quoted every arg a second time — so the once-de-quoted command arrived at
+// bash as a single word ("echo hi && echo bye: command not found", exit 127)
+// and every multi-word procfile line broke whenever universal-auth env vars
+// were set. Execute the generated command line against a stub `infisical`
+// and assert the wrapped multi-word command actually runs.
+func TestWrapRunShellCommandUniversalAuthExecutesMultiWordCommand(t *testing.T) {
+	t.Setenv("INFISICAL_UNIVERSAL_AUTH_CLIENT_ID", "client-id")
+	t.Setenv("INFISICAL_UNIVERSAL_AUTH_CLIENT_SECRET", "client-secret")
+	t.Setenv("INFISICAL_PROJECT_ID", "")
+	t.Setenv("OT_SECRETS_PROVIDER", "")
+
+	command := WrapRunShellCommand("echo hi && echo bye", RunOptions{
+		Environment:      "dev",
+		Path:             "/frontend",
+		ProjectConfigDir: ".",
+	})
+
+	// Stub infisical: skip everything up to `--`, then exec the wrapped
+	// command — the same contract the real `infisical run -- cmd...` has.
+	stubDir := t.TempDir()
+	stub := `#!/bin/sh
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--" ]; then shift; break; fi
+  shift
+done
+exec "$@"
+`
+	if err := os.WriteFile(filepath.Join(stubDir, "infisical"), []byte(stub), 0o755); err != nil {
+		t.Fatalf("write stub infisical: %v", err)
+	}
+	// Stub bash that maps -lc to -c: the generated line uses a login shell,
+	// and on macOS /etc/profile's path_helper rebuilds PATH with system dirs
+	// first, letting a real infisical beat the stub. The quoting/positional-
+	// arg plumbing under test is identical in a non-login shell.
+	bashStub := `#!/bin/sh
+if [ "$1" = "-lc" ]; then
+  shift
+  exec /bin/bash -c "$@"
+fi
+exec /bin/bash "$@"
+`
+	if err := os.WriteFile(filepath.Join(stubDir, "bash"), []byte(bashStub), 0o755); err != nil {
+		t.Fatalf("write stub bash: %v", err)
+	}
+
+	cmd := exec.Command("/bin/bash", "-c", command)
+	// INFISICAL_TOKEN is pre-set so the run script skips its login branch.
+	cmd.Env = []string{
+		"PATH=" + stubDir + ":/usr/bin:/bin",
+		"HOME=" + t.TempDir(),
+		"INFISICAL_TOKEN=stub-token",
+	}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("generated command failed: %v\ncommand: %s\noutput:\n%s", err, command, out)
+	}
+	got := strings.TrimSpace(string(out))
+	if got != "hi\nbye" {
+		t.Fatalf("wrapped command output = %q, want %q\ncommand: %s", got, "hi\nbye", command)
 	}
 }
 

@@ -43,11 +43,18 @@ func TestRunSelfIfNeededSkipsWhenAlreadyActive(t *testing.T) {
 	t.Setenv(activePathEnv, "/backend")
 	t.Setenv(activeEnvironmentEnv, "dev")
 
+	originalLookPath := lookPath
 	originalRunWithSignals := runWithSignals
 	t.Cleanup(func() {
+		lookPath = originalLookPath
 		runWithSignals = originalRunWithSignals
 	})
 
+	// The already-active short-circuit must not require the infisical CLI
+	// to be installed (this also keeps the test host-independent).
+	lookPath = func(string) (string, error) {
+		return "", exec.ErrNotFound
+	}
 	runWithSignals = func(ctx context.Context, spec run.Spec) error {
 		t.Fatalf("runWithSignals should not be called, got %+v", spec)
 		return nil

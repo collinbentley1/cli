@@ -61,6 +61,14 @@ func RunSelfIfNeeded(ctx context.Context, opts Options) error {
 	if len(paths) != 1 {
 		return fmt.Errorf("infisical run supports one secret path per command; got %s", strings.Join(paths, ", "))
 	}
+	environment := normalizeEnvironment(opts.Environment)
+	path := paths[0]
+	// Already re-exec'd under the target scope: nothing to do, and no need
+	// to require (or install) the infisical CLI for a no-op.
+	if os.Getenv(activePathEnv) == path && os.Getenv(activeEnvironmentEnv) == environment {
+		return nil
+	}
+
 	if _, err := lookPath("infisical"); err != nil {
 		if cloudAgentEnv() {
 			if installErr := ensureCloudAgentInfisical(ctx); installErr != nil {
@@ -70,12 +78,6 @@ func RunSelfIfNeeded(ctx context.Context, opts Options) error {
 	}
 	if _, err := lookPath("infisical"); err != nil {
 		return fmt.Errorf("infisical CLI not found; %s", infisicalInstallHint())
-	}
-
-	environment := normalizeEnvironment(opts.Environment)
-	path := paths[0]
-	if os.Getenv(activePathEnv) == path && os.Getenv(activeEnvironmentEnv) == environment {
-		return nil
 	}
 
 	if err := ensureLoginHandler(ctx, opts.ProjectConfigDir, environment, path); err != nil {

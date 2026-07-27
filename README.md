@@ -38,7 +38,164 @@ names are genericized, and the three external integrations are behind
 pluggable provider config. Service commands still encode the source repo's
 conventions (see "Repo conventions" below). Not yet released or versioned.
 
-## Quickstart
+## Try it from a fresh clone
+
+The vendored install path below is the real workflow, but you can exercise
+the CLI without installing anything or touching Infisical, Porter, or
+Tailscale. The only prerequisite is Go (`go.mod` says 1.25.5; this
+walkthrough was run with go 1.26.3 on macOS/arm64). Every command and output
+below was run verbatim, in order, from a fresh clone.
+
+### Build and poke the binary
+
+```bash
+git clone https://github.com/collinbentley1/cli.git
+cd cli
+go build -o ot-bin ./ot
+./ot-bin version
+```
+
+```
+ot version dev (darwin/arm64) [unstamped]
+Built without a version stamp (plain `go build`); ot/scripts/install.sh stamps the git SHA.
+```
+
+(`[unstamped]` is expected from a plain `go build`: only `install.sh` stamps
+the git SHA into the binary, and there is nothing to compare against without
+it. Nothing is wrong.)
+
+`./ot-bin --help` prints the command tree (trimmed here):
+
+```
+ot — per-worktree dev runtime (isolated DB, ports, secrets scope, MCP tunnel)
+
+Usage:
+  ot [command]
+
+Available Commands:
+  bootstrap          Install and configure ot dependencies
+  check              Run pre-commit hooks for a target
+  ...
+  up                 Start dev stack or individual services
+  upgrade            Upgrade dependencies and rebuild ot CLI
+  version            Print ot CLI version
+```
+
+Read-only commands like `version` need none of the provider CLIs — the
+machine this ran on has no Tailscale installed, and the clone's own
+`ot/ot.yaml` (which selects the full infisical/porter/tailscale set) loads
+fine.
+
+### A minimal sandbox repo
+
+`ot` runs against a git repo containing `ot/ot.yaml`. With all three
+providers set to `none`, no external service or account is needed:
+
+```bash
+cd ..
+mkdir ot-sandbox && cd ot-sandbox
+git init -q
+mkdir ot
+cat > ot/ot.yaml <<'EOF'
+version: 1
+providers:
+  secrets: none
+  db_tunnel: none
+  mcp_tunnel: none
+EOF
+git add ot/ot.yaml && git commit -qm "ot config"
+```
+
+The commands below run the binary built above via `../cli/ot-bin`.
+
+**Config is validated up front.** Break the version field and every command
+fails fast:
+
+```bash
+sed -i '' 's/^version: 1/version: 2/' ot/ot.yaml
+../cli/ot-bin version
+# unsupported ot/ot.yaml version: 2 (expected 1)        exit 1
+sed -i '' 's/^version: 2/version: 1/' ot/ot.yaml        # restore
+```
+
+**Provider names are validated too, and environment overrides beat the
+yaml:**
+
+```bash
+OT_SECRETS_PROVIDER=vault ../cli/ot-bin version
+# unknown provider "vault" for OT_SECRETS_PROVIDER (valid: infisical, none)   exit 1
+```
+
+**Argument typos fail instantly**, before any bootstrap or network work:
+
+```bash
+../cli/ot-bin check bogus
+# unknown check target: bogus                           exit 1
+```
+
+**Worktree isolation.** In a primary checkout isolation is off (no isolation
+profile is written). In a linked git worktree, the first run allocates an
+instance id
+and a collision-checked port block:
+
+```bash
+git worktree add -q ../ot-sandbox-wt
+cd ../ot-sandbox-wt
+../cli/ot-bin version          # first run writes .ot/local-dev-profile.json
+grep -E '"(instance_id|offset|backend)"' .ot/local-dev-profile.json
+```
+
+```
+  "instance_id": "4e87f6b168",
+  "offset": 164,
+    "backend": 23285,
+```
+
+A second worktree of the same repo gets a disjoint block:
+
+```bash
+cd ../ot-sandbox
+git worktree add -q ../ot-sandbox-wt2
+cd ../ot-sandbox-wt2
+../cli/ot-bin version >/dev/null
+grep -E '"(instance_id|offset|backend)"' .ot/local-dev-profile.json
+```
+
+```
+  "instance_id": "95b7dd92fb",
+  "offset": 640,
+    "backend": 32805,
+```
+
+The full profile also records per-worktree container names and generated
+local DB passwords (elided here). `OT_WORKTREE_REASSIGN_PORTS=1` forces
+reallocation; allocation is deterministic by path, so with no competing
+block registered it hands the same offset back.
+
+**Providers set to `none` refuse rather than half-run:**
+
+```bash
+cd ../ot-sandbox
+OT_SKIP_SELF_CHECK=1 ../cli/ot-bin up db
+# db tunnel provider is disabled (db_tunnel resolves to none — check OT_DB_TUNNEL_PROVIDER and providers.db_tunnel in ot/ot.yaml); enable porter or run your own tunnel
+#                                                       exit 1
+```
+
+Two caveats on that last command. `OT_SKIP_SELF_CHECK=1` stops the unstamped
+binary from self-installing (rebuild plus symlink into
+`$(brew --prefix)/bin`) before the command runs. And `up` runs a runtime
+preflight that checks for tmux, overmind, and porter, installing missing
+ones via Homebrew — on the machine this walkthrough ran on they were already
+present, so the preflight was check-only.
+
+Cleanup:
+
+```bash
+cd ..
+rm -rf cli ot-sandbox ot-sandbox-wt ot-sandbox-wt2
+```
+
+## Quickstart (vendored)
 
 `ot` is designed to be vendored into the repo it manages, the way it ran in
 its source monorepo: the `ot/` directory and `go.mod` live at your repo root,

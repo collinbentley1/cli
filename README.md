@@ -51,6 +51,7 @@ below was run verbatim, in order, from a fresh clone.
 ```bash
 git clone https://github.com/collinbentley1/cli.git
 cd cli
+git checkout agent/add-ot-cli   # the CLI lands on main when PR #1 merges; drop this line after
 go build -o ot-bin ./ot
 ./ot-bin version
 ```

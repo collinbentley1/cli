@@ -1,0 +1,85 @@
+version: 1
+
+# Pluggable providers for ot's three external touch points.
+# Shipped implementations:
+#   secrets:    infisical  (per-command secret scopes, re-exec injection)
+#   db_tunnel:  porter     (authenticated tunnels to remote datastores)
+#   mcp_tunnel: tailscale  (public per-worktree HTTPS funnel for the MCP endpoint)
+# Set any of them to "none" to disable that integration.
+# Environment overrides: OT_SECRETS_PROVIDER, OT_DB_TUNNEL_PROVIDER,
+# OT_MCP_TUNNEL_PROVIDER.
+providers:
+  secrets: infisical
+  db_tunnel: porter
+  mcp_tunnel: tailscale
+
+# Secret scopes per command target. Paths are secret folders inside your
+# Infisical project (select the project with a repo-level .infisical.json).
+infisical:
+  environment: dev
+  paths:
+    up:
+      frontend:
+        - /frontend
+      backend:
+        - /backend
+      backend-worker:
+        - /backend
+      auth:
+        - /auth
+      crm:
+        - /crm
+    check:
+      auth:
+        - /auth
+      backend:
+        - /backend
+      crm:
+        - /crm
+      datadog:
+        - /ot
+      frontend:
+        - /frontend
+      ot:
+        - /ot
+      mcp:
+        - /backend # OPENAI_API_KEY for the MCP test harness
+    hook:
+      datadog:
+        - /ot
+
+overmind:
+  stacks:
+    dev:
+      socket: .ot/overmind/dev.sock
+      connect_process: backend
+    backend:
+      socket: .ot/overmind/backend.sock
+      connect_process: backend
+    frontend:
+      socket: .ot/overmind/frontend.sock
+      connect_process: frontend
+
+    db:
+      socket: .ot/overmind/db.sock
+      connect_process: app
+
+    crm:
+      socket: .ot/overmind/crm.sock
+      connect_process: crm-web
+
+
+docker:
+  stop_by_default:
+    - app-postgres
+    - crm-postgres
+
+porter:
+  ports:
+    app: 8150
+
+  envs:
+    nonprod:
+      # Placeholder: the name of your Porter datastore for the primary
+      # application database (see `porter datastore list`).
+      app_datastore: nonprod-primary-app-pgsql
